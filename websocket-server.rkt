@@ -83,10 +83,9 @@
 ;; handle : connection -> any
 ;;
 ;; Handles a given connection by writing the server hanshake and then
-;; initiating handling of any received messages from the client.
-;;
-;; NOTE: At the moment all the server does is echo messages back to
-;;       the client.
+;; initiating handling of any received messages from the client. Note
+;; that the default message handler echoes all messages back to the
+;; client.
 (define (handle conn)
   (define out (connection-o-port conn))
   (define in (connection-i-port conn))
@@ -100,13 +99,18 @@
   (write-handshake origin key1 key2 key3 out)
 
   ;; connection is now open
-  (let loop ()
-    (cond [(regexp-match #rx#"\0([^\377]*)\377" in)
-           => (match-lambda [(list _ data)
-                             (let ([message (bytes->string/utf-8 data)])
-                               ((message-handler) message out)
-                               (unless (string=? message "")
-                                 (loop)))])])))
+  (let loop ([message (read-message in)])
+    (unless (string=? message "")
+      ((message-handler) message out)
+      (loop (read-message in)))))
+
+;; read-message : input-port -> string
+;;
+;; Reads a message from the given WebSocket client.
+(define (read-message in)
+  (cond [(regexp-match #rx#"\0([^\377]*)\377" in)
+         => (match-lambda [(list _ data)
+                           (bytes->string/utf-8 data)])]))
 
 ;; write-message : string output-port -> any
 ;;
