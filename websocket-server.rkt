@@ -16,10 +16,10 @@
 ;; Starts the server which will begin listening for connections on the
 ;; provided port. Evaluates to a function which can be evaluated to
 ;; stop the server.
-(define (serve port-no)
+(define (serve #:port [port 80])
   (define main-cust (make-custodian))
   (parameterize ([current-custodian main-cust])
-    (define listener (tcp-listen port-no 5 #t))
+    (define listener (tcp-listen port 5 #t))
     (define (loop)
       (accept-and-handle listener)
       (loop))
@@ -34,13 +34,16 @@
 ;; connection.
 (define (accept-and-handle listener)
   (let ([cust (make-custodian)])
-    (custodian-limit-memory cust (* 50 1024 1024))
+    (custodian-limit-memory cust (* 50 1024 1024)) ; 50MB
     (parameterize ([current-custodian cust])
-      (define-values (in out) (tcp-accept listener))
-      (define conn (new-connection in out cust))
-      (thread (lambda ()
-                (handle conn)
-                (kill-connection! conn))))))
+      (let*-values ([(in out) (tcp-accept listener)]
+                    [(host client) (tcp-addresses in)])
+        (log-info (format "C: ~a" client))
+        (let ([conn (new-connection in out cust)])
+          (thread (lambda ()
+                    (handle conn)
+                    (log-info (format "D: ~a" client))
+                    (kill-connection! conn))))))))
 
 ;; write-handshake : byte-string byte-string byte-string byte-string output-port -> any
 ;;
@@ -48,18 +51,34 @@
 ;; given output port a valid WebSocket handshake and challeng solution
 ;; will be written to the provided output port.
 (define (write-handshake origin key1 key2 key3 out)
-  (define challenge-solution (solve-challenge key1 key2 key3))
-  
-  (display "HTTP/1.1 101 WebSocket Protocol Handshake\r\n" out)
-  (display "Upgrade: WebSocket\r\n" out)
-  (display "Connection: Upgrade\r\n" out)
-  (display (format "Sec-WebSocket-Origin: ~a\r\n" origin) out)
-  (display "Sec-WebSocket-Location: ws://localhost:9999/\r\n" out)
-  (display "\r\n" out)
-  (display challenge-solution out)
-  (flush-output out))  
+  (fprintf out "HTTP/1.1 101 WebSocket Protocol Handshake\r\n")
+  (write-headers (list (make-header #"Upgrade" #"WebSocket")
+                       (make-header #"Connection" #"Upgrade")
+                       (make-header #"Sec-WebSocket-Origin" origin)
+                       (make-header #"Sec-WebSocket-Location" #"ws://localhost:9999/"))
+                 out)
+  (let ([challenge-solution (solve-challenge key1 key2 key3)])
+    (display challenge-solution out))
+  (flush-output out))
+
+;; write-headers : (Listof header) -> any
+;;
+;; Writes a given list of headers to the provided output port.
+(define (write-headers headers out)
+  (for ([header headers])
+     (fprintf out
+              "~a: ~a\r\n"
+              (header-field header)
+              (header-value header)))
+  (fprintf out "\r\n"))
 
 ;; handle : connection -> any
+;;
+;; Handles a given connection by writing the server hanshake and then
+;; initiating handling of any received messages from the client.
+;;
+;; NOTE: At the moment all the server does is echo messages back to
+;;       the client.
 (define (handle conn)
   (define out (connection-o-port conn))
   (define in (connection-i-port conn))
@@ -77,9 +96,14 @@
     (cond [(regexp-match #rx#"\0([^\377]*)\377" in)
            => (match-lambda [(list _ data)
                              (let ([message (bytes->string/utf-8 data)])
-                               (write-message message out)
+                               (handle-message message out)
                                (unless (string=? message "")
                                  (loop)))])])))
+
+;; handle-message : string output-port -> any
+;;
+;; Default message handler. Echoes all messages back to the client.
+(define handle-message write-message)
 
 ;; write-message : string -> any
 ;;
