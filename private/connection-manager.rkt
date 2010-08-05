@@ -13,8 +13,9 @@
  [new-connection (input-port? output-port? custodian? . -> . connection?)]
  [kill-connection! (connection? . -> . void)])
 
-;; new-connection: number i-port o-port custodian -> connection
-;; ask the connection manager for a new connection
+;; new-connection : number input-port output-port custodian -> connection
+;;
+;; Ask the connection manager for a new connection.
 (define i (box 0))
 (define (new-connection i-port o-port cust)
   (make-connection
@@ -22,7 +23,9 @@
      i-port o-port cust))
 
 ;; kill-connection!: connection -> void
-;; kill this connection
+
+;; Closes all the ports associated with a given connection and
+;; shutdowns all resources associated with it.
 (define (kill-connection! conn)
   (with-handlers ([exn:fail:network? void])
     (close-output-port (connection-o-port conn)))
