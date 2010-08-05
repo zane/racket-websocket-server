@@ -1,10 +1,21 @@
 #lang racket
-
+;;; websocket-server.rkt
+;;; 
+;;; Implements a WebSocket server as described in version 76 of the
+;;; web socket protocol as outlined by the document at the following
+;;; URL:
+;;; 
+;;; http://www.whatwg.org/specs/web-socket-protocol/
 (require (file "http/request.rkt")
          (file "private/connection-manager.rkt")
+         (planet soegaard/digest:1:2/digest)
          web-server/http/request-structs)
-(require (planet soegaard/digest:1:2/digest))
 
+;; serve : number -> (-> any)
+;;
+;; Starts the server which will begin listening for connections on the
+;; provided port. Evaluates to a function which can be evaluated to
+;; stop the server.
 (define (serve port-no)
   (define main-cust (make-custodian))
   (parameterize ([current-custodian main-cust])
@@ -16,6 +27,11 @@
   (lambda ()
     (custodian-shutdown-all main-cust)))
 
+;; accept-and-handle : tcp-listener -> any
+;;
+;; Accepts a tcp-listener managing a connection, creates a custodian
+;; for resources used by that connection and calls a handler for that
+;; connection.
 (define (accept-and-handle listener)
   (let ([cust (make-custodian)])
     (custodian-limit-memory cust (* 50 1024 1024))
@@ -26,6 +42,11 @@
                 (handle conn)
                 (kill-connection! conn))))))
 
+;; write-handshake : byte-string byte-string byte-string byte-string output-port -> any
+;;
+;; Given the three keys specified in the WebSocket protocol and a
+;; given output port a valid WebSocket handshake and challeng solution
+;; will be written to the provided output port.
 (define (write-handshake origin key1 key2 key3 out)
   (define challenge-solution (solve-challenge key1 key2 key3))
   
@@ -38,6 +59,7 @@
   (display challenge-solution out)
   (flush-output out))  
 
+;; handle : connection -> any
 (define (handle conn)
   (define out (connection-o-port conn))
   (define in (connection-i-port conn))
@@ -50,20 +72,28 @@
   
   (write-handshake origin key1 key2 key3 out)
 
-  (write-message "welcome" out)
-  
+  ;; connection is now open
   (let loop ()
     (cond [(regexp-match #rx#"\0([^\377]*)\377" in)
            => (match-lambda [(list _ data)
-                             (write-message (bytes->string/utf-8 data) out)])])
-    (loop)))
+                             (let ([message (bytes->string/utf-8 data)])
+                               (write-message message out)
+                               (unless (string=? message "")
+                                 (loop)))])])))
 
+;; write-message : string -> any
+;;
+;; Writes a message to the given WebSocket output port.
 (define (write-message msg out)
   (write-bytes #"\0" out)
   (write-bytes (string->bytes/utf-8 msg) out)
   (write-bytes #"\377" out)
   (flush-output out))
 
+;; solve-challenge : byte-string byte-string byte-string -> byte-string
+;;
+;; Produces the server challenge response when given the three keys
+;; provided by the client in the client's handshake.
 (define (solve-challenge key1 key2 key3)
   (define num1 (/ (extract-nums key1)
                   (count-spaces key1)))
@@ -74,11 +104,22 @@
                            (integer->integer-bytes num2 4 #f #t)
                            key3)))
 
+;; extract-nums : byte-string -> number
+;;
+;; Given a byte string containing digits interspersed with other
+;; characters, evaluates to the number represented by those digits
+;; concatenated together. Used by 'solve-challenge' to determine the
+;; challenge response for the server handshake.
 (define (extract-nums key)
   (string->number 
    (bytes->string/utf-8 
     (apply bytes-append 
            (regexp-match* #"[0-9]" key)))))
 
+;; count-spaces : byte-string -> number
+;;
+;; Counts the number of space characters in a given byte string. Used
+;; by 'solve-challenge' to determine challenge response for the server
+;; handshake.
 (define (count-spaces key)
   (length (regexp-match* #" " key)))
