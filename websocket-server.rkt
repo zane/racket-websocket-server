@@ -11,11 +11,17 @@
          (planet soegaard/digest:1:2/digest)
          web-server/http/request-structs)
 
+;; message-handler : string output-port -> any
+;;
+;; Function used to handle messages from the client. Defaults to echo
+;; all messages back to the client.
+(define message-handler (make-parameter write-message))
+
 ;; serve : number -> (-> any)
 ;;
 ;; Starts the server which will begin listening for connections on the
-;; provided port. Evaluates to a function which can be evaluated to
-;; stop the server.
+;; provided port. Evaluates to a function which can in turn be
+;; evaluated to stop the server.
 (define (serve #:port [port 80])
   (define main-cust (make-custodian))
   (parameterize ([current-custodian main-cust])
@@ -96,14 +102,9 @@
     (cond [(regexp-match #rx#"\0([^\377]*)\377" in)
            => (match-lambda [(list _ data)
                              (let ([message (bytes->string/utf-8 data)])
-                               (handle-message message out)
+                               ((message-handler) message out)
                                (unless (string=? message "")
                                  (loop)))])])))
-
-;; handle-message : string output-port -> any
-;;
-;; Default message handler. Echoes all messages back to the client.
-(define handle-message write-message)
 
 ;; write-message : string -> any
 ;;
