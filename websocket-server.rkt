@@ -17,16 +17,23 @@
 ;; all messages back to the client.
 (define message-handler (make-parameter write-message))
 
+;; memory-limit : number
+;;
+;; Memory limit for each thread.
+(define memory-limit (make-parameter (* 50 1024 1024)))
+
 ;; serve : number -> (-> any)
 ;;
 ;; Starts the server which will begin listening for connections on the
 ;; provided port. Evaluates to a function which can in turn be
 ;; evaluated to stop the server.
 (define (serve #:port [port 80]
-               #:message-handler [handler (message-handler)])
+               #:message-handler [handler (message-handler)]
+               #:memory-limit [limit (memory-limit)])
   (define main-cust (make-custodian))
   (parameterize ([current-custodian main-cust]
-                 [message-handler handler])
+                 [message-handler handler]
+                 [memory-limit limit])
     (define listener (tcp-listen port 5 #t))
     (define (loop)
       (accept-and-handle listener)
@@ -42,7 +49,7 @@
 ;; connection.
 (define (accept-and-handle listener)
   (let ([cust (make-custodian)])
-    (custodian-limit-memory cust (* 50 1024 1024)) ; 50MB
+    (custodian-limit-memory cust (memory-limit)) ; 50MB
     (parameterize ([current-custodian cust])
       (let*-values ([(in out) (tcp-accept listener)]
                     [(host client) (tcp-addresses in)])
