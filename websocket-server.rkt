@@ -22,9 +22,11 @@
 ;; Starts the server which will begin listening for connections on the
 ;; provided port. Evaluates to a function which can in turn be
 ;; evaluated to stop the server.
-(define (serve #:port [port 80])
+(define (serve #:port [port 80]
+               #:message-handler [handler (message-handler)])
   (define main-cust (make-custodian))
-  (parameterize ([current-custodian main-cust])
+  (parameterize ([current-custodian main-cust]
+                 [message-handler handler])
     (define listener (tcp-listen port 5 #t))
     (define (loop)
       (accept-and-handle listener)
@@ -106,7 +108,7 @@
                                (unless (string=? message "")
                                  (loop)))])])))
 
-;; write-message : string -> any
+;; write-message : string output-port -> any
 ;;
 ;; Writes a message to the given WebSocket output port.
 (define (write-message msg out)
