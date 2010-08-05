@@ -56,8 +56,8 @@
 ;; write-handshake : byte-string byte-string byte-string byte-string output-port -> any
 ;;
 ;; Given the three keys specified in the WebSocket protocol and a
-;; given output port a valid WebSocket handshake and challeng solution
-;; will be written to the provided output port.
+;; given output port a valid WebSocket handshake and challenge
+;; solution will be written to the provided output port.
 (define (write-handshake origin key1 key2 key3 out)
   (fprintf out "HTTP/1.1 101 WebSocket Protocol Handshake\r\n")
   (write-headers (list (make-header #"Upgrade" #"WebSocket")
