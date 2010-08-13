@@ -11,6 +11,17 @@
          (planet soegaard/digest:1:2/digest)
          web-server/http/request-structs)
 
+;; write-message : string output-port -> any
+;;
+;; Writes a message to the given WebSocket output port.
+(define (write-message msg out)
+  (write-bytes #"\0" out)
+  (write-bytes (string->bytes/utf-8 msg) out)
+  (write-bytes #"\377" out)
+  (log-info (let*-values ([(host client) (tcp-addresses out)])
+              (format "M: (<- ~a) ~a" client msg)))
+  (flush-output out))
+
 ;; message-handler : string output-port -> any
 ;;
 ;; Function used to handle messages from the client. Defaults to echo
@@ -19,8 +30,8 @@
 
 ;; memory-limit : number
 ;;
-;; Memory limit for each thread.
-(define memory-limit (make-parameter (* 50 1024 1024)))
+;; Memory limit for each connection thread.
+(define memory-limit (make-parameter (* 50 1024 1024))) ; 50MB
 
 ;; serve : number -> (-> any)
 ;;
@@ -49,7 +60,7 @@
 ;; connection.
 (define (accept-and-handle listener)
   (let ([cust (make-custodian)])
-    (custodian-limit-memory cust (memory-limit)) ; 50MB
+    (custodian-limit-memory cust (memory-limit))
     (parameterize ([current-custodian cust])
       (let*-values ([(in out) (tcp-accept listener)]
                     [(host client) (tcp-addresses in)])
@@ -70,7 +81,7 @@
   (write-headers (list (make-header #"Upgrade" #"WebSocket")
                        (make-header #"Connection" #"Upgrade")
                        (make-header #"Sec-WebSocket-Origin" origin)
-                       (make-header #"Sec-WebSocket-Location" #"ws://localhost:9999/"))
+                       (make-header #"Sec-WebSocket-Location" #"ws://localhost/"))
                  out)
   (let ([challenge-solution (solve-challenge key1 key2 key3)])
     (display challenge-solution out))
@@ -106,27 +117,25 @@
   (write-handshake origin key1 key2 key3 out)
 
   ;; connection is now open
-  (let loop ([message (read-message in)])
-    (unless (string=? message "")
-      ((message-handler) message out)
+  (let loop ([msg (read-message in)])
+    (unless (or (eof-object? msg)
+                (string=? msg ""))
+      ((message-handler) msg out)
       (loop (read-message in)))))
 
 ;; read-message : input-port -> string
 ;;
 ;; Reads a message from the given WebSocket client.
 (define (read-message in)
-  (cond [(regexp-match #rx#"\0([^\377]*)\377" in)
-         => (match-lambda [(list _ data)
-                           (bytes->string/utf-8 data)])]))
-
-;; write-message : string output-port -> any
-;;
-;; Writes a message to the given WebSocket output port.
-(define (write-message msg out)
-  (write-bytes #"\0" out)
-  (write-bytes (string->bytes/utf-8 msg) out)
-  (write-bytes #"\377" out)
-  (flush-output out))
+  (let ([msg (cond [(regexp-try-match #rx#"\0([^\377]*)\377" in)
+                        => (match-lambda [(list _ data)
+                                          (bytes->string/utf-8 data)])]
+                   [(eof-object? (peek-byte in))
+                    eof]
+                   [else (void)])]) ; TODO: throw an exception here
+    (log-info (let*-values ([(host client) (tcp-addresses in)])
+                (format "M: (-> ~a) ~a" client msg)))
+    msg))
 
 ;; solve-challenge : byte-string byte-string byte-string -> byte-string
 ;;
